@@ -110,7 +110,7 @@
 		  (seq-do #'flycheck-pdflatex--fix-errors errors)
 		  (flycheck-fill-empty-line-numbers errors)
 		  errors)
-  :modes (tex-mode latex-mode))
+  :modes (LaTeX-mode latex-mode tex-mode plain-tex-mode))
 
 (add-to-list 'flycheck-checkers 'pdflatex)
 
