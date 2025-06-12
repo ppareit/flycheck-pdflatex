@@ -13,6 +13,8 @@ Assuming you are using `use-package` and `straight.el`, add the following code t
               :repo "ppareit/flycheck-pdflatex"))
 ```
 
+If this package gets updated, you then can pull in the latest changes with `M-x straight-pull-all` or `M-x straight-pull-package` and restart emacs.
+
 ## Usage
 
 To use `flycheck-pdflatex`, simply open a TeX/LaTeX file in Emacs and start Flycheck mode. `flycheck-pdflatex` will automatically be used to check the syntax of your file.
@@ -23,6 +25,14 @@ To use `flycheck-pdflatex`, simply open a TeX/LaTeX file in Emacs and start Flyc
 - Formats error messages for fatal errors to make them shorter and more readable.
 - Fixes some common errors and warnings reported by `pdflatex`, such as undefined control sequences and missing `\item` errors.
 - Works with `use-package` and `straight.el` for easy installation and management.
+
+## Troubleshooting
+
+- Check to see if the file is in you load path:  `M-: (locate-library "flycheck-pdflatex") RET`.
+- Check to see if the file is loaded: `M-: (featurep 'flycheck-pdflatex) RET`.
+- Check if pdflatex is registered in flycheck: `M-: (memq 'pdflatex flycheck-checkers) RET`
+- Open an `.tex`-file and run `M-x flycheck-verify-setup RET`
+
 
 ## License
 
