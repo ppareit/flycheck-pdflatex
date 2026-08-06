@@ -19,6 +19,14 @@ If this package gets updated, you then can pull in the latest changes with `M-x 
 
 To use `flycheck-pdflatex`, simply open a TeX/LaTeX file in Emacs and start Flycheck mode. `flycheck-pdflatex` will automatically be used to check the syntax of your file.
 
+Generated files are written to `temporary-file-directory` by default. Customize
+`flycheck-pdflatex-output-directory` to choose another directory, or set it to
+`nil` to use pdflatex's default output location:
+
+```elisp
+(setq flycheck-pdflatex-output-directory "~/build/latex")
+```
+
 ## Features
 
 - Runs `pdflatex` on your TeX/LaTeX file and reports any errors or warnings.

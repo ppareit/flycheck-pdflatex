@@ -46,6 +46,25 @@
 (require 'flycheck)
 (require 'cl-lib)
 
+(defgroup flycheck-pdflatex nil
+  "Flycheck support for checking LaTeX with pdflatex."
+  :group 'flycheck)
+
+(defcustom flycheck-pdflatex-output-directory temporary-file-directory
+  "Directory where `pdflatex' writes generated files during checks.
+When nil, do not pass an explicit output directory and let `pdflatex'
+use its default behavior."
+  :type '(choice (directory :tag "Directory")
+                 (const :tag "Use pdflatex default" nil))
+  :group 'flycheck-pdflatex)
+
+(defun flycheck-pdflatex--output-directory-argument ()
+  "Return the `pdflatex' output-directory argument, or nil."
+  (when flycheck-pdflatex-output-directory
+    (concat "-output-directory="
+            (directory-file-name
+             (expand-file-name flycheck-pdflatex-output-directory)))))
+
 (defun flycheck-pdflatex--fix-errors (err)
   "Fix pdflatex errors, ERR, to easier to read erros."
   (let ((errmsg (flycheck-error-message err)))
@@ -89,6 +108,7 @@
 	    "-file-line-error"		    ; Show line numbers plz
 	    "-draftmode"		    ; Don't generate pdf
 	    "-interaction=nonstopmode"	    ; Keep running
+	    (eval (flycheck-pdflatex--output-directory-argument))
 	    source-inplace)
   :error-patterns
   (;; Emergency stop, ignore error, the Fatal error will handle this
@@ -116,4 +136,3 @@
 
 (provide 'flycheck-pdflatex)
 ;;; flycheck-pdflatex.el ends here
-
