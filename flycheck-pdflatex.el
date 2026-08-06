@@ -108,6 +108,7 @@ use its default behavior."
 	    "-file-line-error"		    ; Show line numbers plz
 	    "-draftmode"		    ; Don't generate pdf
 	    "-interaction=nonstopmode"	    ; Keep running
+	    "-shell-escape"		    ; Allow tikz externalization's nested pdflatex calls
 	    (eval (flycheck-pdflatex--output-directory-argument))
 	    source-inplace)
   :error-patterns
