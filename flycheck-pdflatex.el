@@ -65,6 +65,18 @@ use its default behavior."
             (directory-file-name
              (expand-file-name flycheck-pdflatex-output-directory)))))
 
+(defun flycheck-pdflatex--source ()
+  "Return the input that `pdflatex' should check for the current buffer.
+Class files are loaded from a minimal document because they cannot be compiled
+as standalone LaTeX documents."
+  (let ((source (flycheck-save-buffer-to-temp #'flycheck-temp-file-inplace)))
+    (if (and buffer-file-name
+	     (string-equal (downcase (or (file-name-extension buffer-file-name) ""))
+			   "cls"))
+	(format "\\documentclass{%s}\\begin{document}\\end{document}"
+		(file-name-sans-extension source))
+      source)))
+
 (defun flycheck-pdflatex--fix-errors (err)
   "Fix pdflatex errors, ERR, to easier to read erros."
   (let ((errmsg (flycheck-error-message err)))
@@ -110,7 +122,7 @@ use its default behavior."
 	    "-interaction=nonstopmode"	    ; Keep running
 	    "-shell-escape"		    ; Allow tikz externalization's nested pdflatex calls
 	    (eval (flycheck-pdflatex--output-directory-argument))
-	    source-inplace)
+	    (eval (flycheck-pdflatex--source)))
   :error-patterns
   (;; Emergency stop, ignore error, the Fatal error will handle this
    (error line-start (file-name) ":" line ": Emergency stop." line-end)
