@@ -45,6 +45,7 @@
 
 (require 'flycheck)
 (require 'cl-lib)
+(require 'seq)
 
 (defgroup flycheck-pdflatex nil
   "Flycheck checker for LaTeX files using pdflatex."
@@ -58,6 +59,27 @@ Each source directory gets its own subdirectory here, so the
 asymptote package) never clutter the source directory, and the
 .aux file survives between checks."
   :type 'directory)
+
+(defcustom flycheck-pdflatex-report-boxes nil
+  "When non-nil, report overfull and underfull boxes as info."
+  :type 'boolean)
+
+(defcustom flycheck-pdflatex-ignored-warnings
+  '(;; Summaries, the individual warnings are reported themselves
+    "\\`There were undefined references"
+    "\\`There were multiply-defined labels"
+    ;; A check is a single pass, the aux file from the previous check
+    ;; resolves these on the next one
+    "Rerun to get"
+    "\\`Label(s) may have changed"
+    ;; Labels of packages (mdframed, hyperref, ...), not of the author
+    "\\`\\(?:Reference\\|Label\\) `[^']*@[^']*'"
+    ;; The checker never runs asy, so the figures are always missing
+    "\\`file `[^']*' not found")
+  "Regexps for warnings that are not reported.
+A warning is dropped when one of these regexps matches its
+message."
+  :type '(repeat regexp))
 
 (defun flycheck-pdflatex--output-directory ()
   "Return the output directory for the current buffer, creating it."
@@ -79,9 +101,51 @@ set -- -cnf-line=max_print_line=1024 -file-line-error -draftmode \\
 exec pdflatex \"$@\""
   "Shell script that runs pdflatex, twice when there is no aux file yet.")
 
+(defun flycheck-pdflatex--column-of (err regexp)
+  "Return the column of REGEXP on the line of ERR, or nil."
+  (let ((line (flycheck-error-line err)))
+    (when (and line (> line 0))
+      (with-current-buffer (flycheck-error-buffer err)
+        (save-excursion
+          (save-restriction
+            (widen)
+            (goto-char (point-min))
+            (forward-line (1- line))
+            (when (re-search-forward regexp (line-end-position) t)
+              (1+ (- (match-beginning 0) (line-beginning-position))))))))))
+
+(defun flycheck-pdflatex--mark (err regexp)
+  "Point ERR at the first match of REGEXP on its line."
+  (let ((column (flycheck-pdflatex--column-of err regexp)))
+    (when column
+      (setf (flycheck-error-column err) column)
+      (setf (flycheck-error-end-column err)
+            (+ column (- (match-end 0) (match-beginning 0)))))))
+
+(defun flycheck-pdflatex--line-of (err regexp &optional last)
+  "Put ERR on the first line matching REGEXP in its buffer.
+With LAST, use the last matching line instead."
+  (with-current-buffer (flycheck-error-buffer err)
+    (save-excursion
+      (save-restriction
+        (widen)
+        (goto-char (if last (point-max) (point-min)))
+        (when (if last
+                  (re-search-backward regexp nil t)
+                (re-search-forward regexp nil t))
+          (setf (flycheck-error-line err) (line-number-at-pos))
+          (setf (flycheck-error-column err)
+                (1+ (- (match-beginning 0) (line-beginning-position))))
+          (setf (flycheck-error-end-column err)
+                (+ (flycheck-error-column err)
+                   (- (match-end 0) (match-beginning 0)))))))))
+
 (defun flycheck-pdflatex--fix-errors (err)
   "Fix pdflatex errors, ERR, to easier to read erros."
   (let ((errmsg (flycheck-error-message err)))
+    ;; Join the continuation lines of package warnings, "(pkg)   more"
+    (setq errmsg (replace-regexp-in-string "\n([^)\n]*) *" " " errmsg))
+    (setf (flycheck-error-message err) errmsg)
     (pcase errmsg
       ;; Make long string for fatal error short
       (" ==> Fatal error occurred"
@@ -90,30 +154,34 @@ exec pdflatex \"$@\""
       ("Something's wrong--perhaps a missing \\item."
        (setf (flycheck-error-message err) "Missing \\item."))
       ;; Undefined control sequence extraction
-      ((pred (lambda (s) (string-prefix-p "Undefined control sequence." s)))
-       (when (string-match ".*\n.*\\\\\\([[:alpha:]]*\\)" errmsg)
-	 (let* ((sequence (match-string 1 errmsg))
-		(column (with-current-buffer (flycheck-error-buffer err)
-			  (save-excursion
-			    (goto-char (point-min))
-			    (forward-line (1- (flycheck-error-line err)))
-			    (string-match sequence (buffer-substring
-						    (line-beginning-position)
-						    (line-end-position))))))
-		(end-column (+ column (length sequence) 1)))
-	   (setf (flycheck-error-message err)
-		 (format "Undefined control sequence: \\%s" sequence))
-	   (setf (flycheck-error-column err) column)
-	   (setf (flycheck-error-end-column err) end-column))))
+      ((pred (string-prefix-p "Undefined control sequence."))
+       (when (string-match ".*\n.*\\\\\\([[:alpha:]@]+\\)" errmsg)
+         (let ((sequence (match-string 1 errmsg)))
+           (setf (flycheck-error-message err)
+                 (format "Undefined control sequence: \\%s" sequence))
+           (flycheck-pdflatex--mark
+            err (concat "\\\\" (regexp-quote sequence) "\\b")))))
+      ;; Undefined reference or citation, point at the key
+      ((rx bos (or "Reference" "Citation") " `" (let key (+ (not "'"))) "'")
+       (flycheck-pdflatex--mark err (regexp-quote key)))
+      ;; A duplicate label has no line number, find the last \label
+      ((rx bos "Label `" (let key (+ (not "'"))) "' multiply defined")
+       (unless (and (flycheck-error-line err) (> (flycheck-error-line err) 0))
+         (flycheck-pdflatex--line-of
+          err (concat "\\\\label{" (regexp-quote key) "}") t)))
       ;; This warning has no line number, but belongs to \maketitle
       ("No \\author given."
-       (let ((line (with-current-buffer (flycheck-error-buffer err)
-		     (save-excursion
-		       (goto-char (point-min))
-		       (search-forward "\\maketitle")
-		       (line-number-at-pos)))))
-	 (setf (flycheck-error-line err) line))))
+       (flycheck-pdflatex--line-of err "\\\\maketitle")))
     err))
+
+(defun flycheck-pdflatex--ignored-p (err)
+  "Return non-nil when ERR should not be reported."
+  (let ((msg (or (flycheck-error-message err) "")))
+    (or (and (eq (flycheck-error-level err) 'info)
+             (not flycheck-pdflatex-report-boxes))
+        (and (eq (flycheck-error-level err) 'warning)
+             (seq-some (lambda (re) (string-match-p re msg))
+                       flycheck-pdflatex-ignored-warnings)))))
 
 (flycheck-define-checker pdflatex
   "A LaTeX syntax and checker using pdflatex.
@@ -129,21 +197,44 @@ between checks, so references resolve like in a real build."
    (error line-start (file-name) ":" line ": Emergency stop." line-end)
    ;; Fatal error, flycheck-pdflatex--fix-error will imrpove message
    (error line-start (file-name) ":" line ": "
-	  (message " ==> Fatal error occurred") (one-or-more not-newline)
-	  line-end)
+          (message " ==> Fatal error occurred") (one-or-more not-newline)
+          line-end)
    ;; Undefined control sequence, reed extra line te extract sequence
    (error line-start (file-name) ":" line ": "
-	  (message "Undefined control sequence.\n" (one-or-more not-newline)) line-end)
+          (message "Undefined control sequence.\n" (one-or-more not-newline)) line-end)
    ;; Specifiek error message, is generic, keep last
    (error line-start (file-name) ":" line ": LaTeX Error: " (message) line-end)
    ;; Most generic error messages, keep last
    (error line-start (file-name) ":" line ": " (message) line-end)
-   ;; Most generic warning messages, keep last
-   (warning line-start "LaTeX Warning: " (message) line-end))
+   ;; LaTeX, font, package and class warnings with a line number,
+   ;; possibly spread over continuation lines "(pkg)   ..."
+   (warning line-start
+            (or "LaTeX" (seq (or "Package" "Class") " " (+ (not (any " \n")))))
+            (? " Font") " Warning: "
+            (message (+? not-newline)
+                     (*? "\n(" (+ (not (any ")\n"))) ")" (* not-newline)))
+            (+ " ") "on input line " line "." line-end)
+   ;; The same warnings without a line number
+   (warning line-start
+            (or "LaTeX" (seq (or "Package" "Class") " " (+ (not (any " \n")))))
+            (? " Font") " Warning: "
+            (message (+ not-newline)
+                     (* "\n(" (+ (not (any ")\n"))) ")" (+ not-newline)))
+            line-end)
+   ;; Overfull and underfull boxes, only with `flycheck-pdflatex-report-boxes'
+   (info line-start
+         (message (or "Overfull" "Underfull") " \\" (any "hv") "box ("
+                  (+ (not (any ")\n"))) ")")
+         " in " (or "paragraph" "alignment") " at lines " line "--" end-line
+         line-end)
+   (info line-start
+         (message (or "Overfull" "Underfull") " \\" (any "hv") "box ("
+                  (+ (not (any ")\n"))) ")")
+         " detected at line " line line-end))
   :error-filter (lambda (errors)
-		  (seq-do #'flycheck-pdflatex--fix-errors errors)
-		  (flycheck-fill-empty-line-numbers errors)
-		  errors)
+                  (seq-do #'flycheck-pdflatex--fix-errors errors)
+                  (flycheck-fill-empty-line-numbers
+                   (seq-remove #'flycheck-pdflatex--ignored-p errors)))
   :modes (LaTeX-mode latex-mode tex-mode plain-tex-mode))
 
 (add-to-list 'flycheck-checkers 'pdflatex)
