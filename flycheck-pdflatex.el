@@ -1,4 +1,4 @@
-;;; flycheck-pdflatex.el --- LaTeX flycheck checker with pdflatex compiler
+;;; flycheck-pdflatex.el --- LaTeX flycheck checker with pdflatex compiler  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023 Pieter Pareit
 
@@ -46,6 +46,39 @@
 (require 'flycheck)
 (require 'cl-lib)
 
+(defgroup flycheck-pdflatex nil
+  "Flycheck checker for LaTeX files using pdflatex."
+  :group 'flycheck
+  :prefix "flycheck-pdflatex-")
+
+(defcustom flycheck-pdflatex-output-directory temporary-file-directory
+  "Root directory for the files pdflatex writes while checking.
+Each source directory gets its own subdirectory here, so the
+.aux, .log and helper files (for example the .asy files of the
+asymptote package) never clutter the source directory, and the
+.aux file survives between checks."
+  :type 'directory)
+
+(defun flycheck-pdflatex--output-directory ()
+  "Return the output directory for the current buffer, creating it."
+  (let ((dir (expand-file-name
+              (md5 (expand-file-name default-directory))
+              (expand-file-name
+               (format "flycheck-pdflatex-%s" (user-uid))
+               flycheck-pdflatex-output-directory))))
+    (make-directory dir t)
+    dir))
+
+(defconst flycheck-pdflatex--script
+  "out=$1; src=$2
+aux=$out/$(basename \"$src\" .tex).aux
+set -- -cnf-line=max_print_line=1024 -file-line-error -draftmode \\
+    -interaction=nonstopmode -output-directory=\"$out\" \"$src\"
+# Without an aux file every reference is undefined: prime it first
+[ -f \"$aux\" ] || pdflatex \"$@\" >/dev/null 2>&1
+exec pdflatex \"$@\""
+  "Shell script that runs pdflatex, twice when there is no aux file yet.")
+
 (defun flycheck-pdflatex--fix-errors (err)
   "Fix pdflatex errors, ERR, to easier to read erros."
   (let ((errmsg (flycheck-error-message err)))
@@ -83,13 +116,14 @@
     err))
 
 (flycheck-define-checker pdflatex
-  "A LaTeX syntax and checker using pdflatex."
-  :command ("pdflatex"
-	    "-cnf-line=max_print_line=1024" ; Don't wrap errors
-	    "-file-line-error"		    ; Show line numbers plz
-	    "-draftmode"		    ; Don't generate pdf
-	    "-interaction=nonstopmode"	    ; Keep running
-	    source-inplace)
+  "A LaTeX syntax and checker using pdflatex.
+
+The files pdflatex writes go to a directory under
+`flycheck-pdflatex-output-directory'.  The .aux file stays there
+between checks, so references resolve like in a real build."
+  :command ("sh" "-c" (eval flycheck-pdflatex--script) "sh"
+            (eval (flycheck-pdflatex--output-directory))
+            source-inplace)
   :error-patterns
   (;; Emergency stop, ignore error, the Fatal error will handle this
    (error line-start (file-name) ":" line ": Emergency stop." line-end)
