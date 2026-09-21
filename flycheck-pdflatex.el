@@ -57,8 +57,11 @@
 Each source directory gets its own subdirectory here, so the
 .aux, .log and helper files (for example the .asy files of the
 asymptote package) never clutter the source directory, and the
-.aux file survives between checks."
-  :type 'directory)
+.aux file survives between checks.  When nil, do not pass an
+explicit output directory and let `pdflatex' use its default
+behavior."
+  :type '(choice (directory :tag "Directory")
+                 (const :tag "Use pdflatex default" nil)))
 
 (defcustom flycheck-pdflatex-report-boxes nil
   "When non-nil, report overfull and underfull boxes as info."
@@ -75,27 +78,54 @@ asymptote package) never clutter the source directory, and the
     ;; Labels of packages (mdframed, hyperref, ...), not of the author
     "\\`\\(?:Reference\\|Label\\) `[^']*@[^']*'"
     ;; The checker never runs asy, so the figures are always missing
-    "\\`file `[^']*' not found")
+    "\\`file `[^']*' not found"
+    ;; A class file is checked as a copy with another name
+    "\\`You have requested document class `[^']*flycheck_")
   "Regexps for warnings that are not reported.
 A warning is dropped when one of these regexps matches its
 message."
   :type '(repeat regexp))
 
 (defun flycheck-pdflatex--output-directory ()
-  "Return the output directory for the current buffer, creating it."
-  (let ((dir (expand-file-name
+  "Return the output directory for the current buffer, creating it.
+Return nil when `flycheck-pdflatex-output-directory' is nil."
+  (when flycheck-pdflatex-output-directory
+    (let ((dir (expand-file-name
               (md5 (expand-file-name default-directory))
               (expand-file-name
                (format "flycheck-pdflatex-%s" (user-uid))
                flycheck-pdflatex-output-directory))))
-    (make-directory dir t)
-    dir))
+      (make-directory dir t)
+      dir)))
+
+(defun flycheck-pdflatex--source (source)
+  "Return the input that `pdflatex' should check for SOURCE.
+SOURCE is the temporary copy of the current buffer.  Class files are
+loaded from a minimal document because they cannot be compiled as
+standalone LaTeX documents."
+  (if (and buffer-file-name
+	   (string-equal (downcase (or (file-name-extension buffer-file-name) ""))
+			 "cls"))
+      (format "\\documentclass{%s}\\begin{document}\\end{document}"
+	      (file-name-sans-extension source))
+    source))
+
+(defun flycheck-pdflatex--arguments ()
+  "Return the job name, the output directory and the input for `pdflatex'.
+The job name is that of the temporary copy, also for a class file,
+so the script can find the .aux file of the previous check."
+  (let ((source (flycheck-save-buffer-to-temp #'flycheck-temp-file-inplace)))
+    (list (file-name-base source)
+          (or (flycheck-pdflatex--output-directory) "")
+          (flycheck-pdflatex--source source))))
 
 (defconst flycheck-pdflatex--script
-  "out=$1; src=$2
-aux=$out/$(basename \"$src\" .tex).aux
+  "job=$1; out=$2; src=$3
+aux=${out:-.}/$job.aux
+# -shell-escape allows the nested pdflatex calls of tikz externalization
 set -- -cnf-line=max_print_line=1024 -file-line-error -draftmode \\
-    -interaction=nonstopmode -output-directory=\"$out\" \"$src\"
+    -interaction=nonstopmode -shell-escape -jobname=\"$job\" \\
+    ${out:+\"-output-directory=$out\"} \"$src\"
 # Without an aux file every reference is undefined: prime it first
 [ -f \"$aux\" ] || pdflatex \"$@\" >/dev/null 2>&1
 exec pdflatex \"$@\""
@@ -190,8 +220,7 @@ The files pdflatex writes go to a directory under
 `flycheck-pdflatex-output-directory'.  The .aux file stays there
 between checks, so references resolve like in a real build."
   :command ("sh" "-c" (eval flycheck-pdflatex--script) "sh"
-            (eval (flycheck-pdflatex--output-directory))
-            source-inplace)
+            (eval (flycheck-pdflatex--arguments)))
   :error-patterns
   (;; Emergency stop, ignore error, the Fatal error will handle this
    (error line-start (file-name) ":" line ": Emergency stop." line-end)
@@ -241,4 +270,3 @@ between checks, so references resolve like in a real build."
 
 (provide 'flycheck-pdflatex)
 ;;; flycheck-pdflatex.el ends here
-

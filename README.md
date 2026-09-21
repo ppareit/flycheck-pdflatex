@@ -19,6 +19,15 @@ If this package gets updated, you then can pull in the latest changes with `M-x 
 
 To use `flycheck-pdflatex`, simply open a TeX/LaTeX file in Emacs and start Flycheck mode. `flycheck-pdflatex` will automatically be used to check the syntax of your file.
 
+Generated files are written to a subdirectory of `temporary-file-directory` by
+default, one per source directory. Customize `flycheck-pdflatex-output-directory`
+to choose another directory, or set it to `nil` to use pdflatex's default output
+location:
+
+```elisp
+(setq flycheck-pdflatex-output-directory "~/build/latex")
+```
+
 ## Features
 
 - Runs `pdflatex` on your TeX/LaTeX file and reports any errors or warnings.
@@ -26,17 +35,18 @@ To use `flycheck-pdflatex`, simply open a TeX/LaTeX file in Emacs and start Flyc
 - Keeps the `.aux` file between checks, so references resolve like in a real build. When there is no `.aux` file yet, `pdflatex` runs one extra pass first.
 - Reports LaTeX, package, class and font warnings on the line they belong to, and points at the key of an undefined `\ref` or `\cite`.
 - Leaves out warnings you cannot act on while checking, such as `Rerun to get cross-references right` or undefined labels of packages like `mdframed`.
+- Checks class files (`.cls`) by loading them from a minimal document.
 - Formats error messages for fatal errors to make them shorter and more readable.
 - Fixes some common errors and warnings reported by `pdflatex`, such as undefined control sequences and missing `\item` errors.
 - Works with `use-package` and `straight.el` for easy installation and management.
 
 ## Customization
 
-- `flycheck-pdflatex-output-directory`: root of the directories where `pdflatex` writes its files, one per source directory. Defaults to `temporary-file-directory`.
+- `flycheck-pdflatex-output-directory`: root of the directories where `pdflatex` writes its files, one per source directory. Defaults to `temporary-file-directory`; `nil` uses pdflatex's default output location.
 - `flycheck-pdflatex-report-boxes`: when non-nil, overfull and underfull boxes are reported as info. Defaults to nil.
 - `flycheck-pdflatex-ignored-warnings`: regexps for warnings that are not reported.
 
-The checker runs `pdflatex` through `sh`, so it needs a POSIX shell.
+The checker runs `pdflatex` through `sh`, so it needs a POSIX shell. It passes `-shell-escape`, so the nested `pdflatex` calls of TikZ externalization work.
 
 ## Troubleshooting
 
